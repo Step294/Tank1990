@@ -4,22 +4,23 @@ from flask import Flask, send_from_directory, jsonify
 print("🟡 SERVER STARTED")
 print("🟡 THIS server.py FILE IS:", __file__)
 
-app = Flask(__name__, static_folder="static")
+# Корневая папка репозитория
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+print("🟡 ROOT FOLDER SET TO:", ROOT_DIR)
 
-print("🟡 STATIC FOLDER SET TO:", app.static_folder)
-print("🟡 STATIC FOLDER ABSOLUTE:", os.path.abspath(app.static_folder))
+app = Flask(__name__, static_folder=ROOT_DIR)
 
 
 @app.route("/")
 def index():
     print("➡ GET /")
-    return send_from_directory(app.static_folder, "index.html")
+    return send_from_directory(ROOT_DIR, "index.html")
 
 
 @app.route("/<path:filename>")
-def serve_static_files(filename):
-    print(f"➡ STATIC REQUEST: {filename}")
-    return send_from_directory(app.static_folder, filename)
+def serve_files(filename):
+    print(f"➡ REQUEST: {filename}")
+    return send_from_directory(ROOT_DIR, filename)
 
 
 @app.route("/api/test")
