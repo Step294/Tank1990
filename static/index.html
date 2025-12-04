@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Battle City 1990</title>
+    <style>
+        body {
+            margin: 0;
+            background: #000;
+            overflow: hidden;
+        }
+    </style>
+    <!-- Подключаем VK Bridge -->
+    <script src="https://unpkg.com/@vkontakte/vk-bridge/dist/browser.min.js"></script>
+</head>
+<body>
+
+<div id="gameContainer"></div>
+
+<script>
+    // Инициализация VK Bridge
+    vkBridge.send('VKWebAppInit');
+
+    // Получаем информацию о пользователе VK
+    vkBridge.send('VKWebAppGetUserInfo')
+        .then(user => {
+            console.log('VK пользователь:', user);
+
+            // Можно передать user.id или user.first_name в игру
+            // Например, создаём глобальную переменную
+            window.vkUser = user;
+        })
+        .catch(err => console.error(err));
+</script>
+<script src="phaser.min.js"></script>
+<script src="tank1990.js"></script>
+
+<script>
+    // Если нужно передать VK ID в игру, можно вызвать функцию внутри tank1990.js
+    if (typeof startGameWithVKUser === 'function') {
+        startGameWithVKUser(window.vkUser);
+    }
+</script>
+
+</body>
+</html>
