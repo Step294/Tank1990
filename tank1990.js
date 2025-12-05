@@ -2,8 +2,8 @@
   // -----------------------
   // Конфигурация размеров
   // -----------------------
-  const GAME_WIDTH = 900;
-  const GAME_HEIGHT = 640;
+  const GAME_WIDTH = 920;
+  const GAME_HEIGHT = 700;
   const TILE = 40; // базовый тайл
   const MAP_W = Math.floor(GAME_WIDTH / TILE); // 32
   const MAP_H = Math.floor(GAME_HEIGHT / TILE); // 18
