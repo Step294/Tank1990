@@ -2,7 +2,7 @@
   // -----------------------
   // Конфигурация размеров
   // -----------------------
-  const GAME_WIDTH = 1280;
+  const GAME_WIDTH = 800;
   const GAME_HEIGHT = 720;
   const TILE = 40; // базовый тайл
   const MAP_W = Math.floor(GAME_WIDTH / TILE); // 32
@@ -24,7 +24,9 @@
     hull_green: 0x1e8f2d,
     hull_red: 0xc83a3a,
     star_gold: 0xffdf66,
-    white: 0xffffff
+    white: 0xffffff,
+    fuel: 0xFF9900, // Цвет топливных бочек
+    fuel_dark: 0xCC6600 // Темный цвет для деталей
   };
 
   // -----------------------
@@ -86,6 +88,20 @@
         o.stop(start + (i + 1) * piece + 0.01);
       });
     }
+    fuelPickup() {
+      if (!this.ctx) return;
+      const o = this.ctx.createOscillator();
+      const g = this.ctx.createGain();
+      o.type = 'sine';
+      o.frequency.value = 660;
+      g.gain.value = 0.2;
+      o.connect(g);
+      g.connect(this.ctx.destination);
+      const now = this.ctx.currentTime;
+      o.start(now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+      o.stop(now + 0.17);
+    }
   }
   const audio = new AudioSynth();
 
@@ -124,9 +140,7 @@
     // bricks
     let bc = 40 + Math.floor(Math.random() * 36);
     while (bc--) {
-      const rx = 1 + Math.floor(Math.
-
-random() * (w - 2));
+      const rx = 1 + Math.floor(Math.random() * (w - 2));
       const ry = 1 + Math.floor(Math.random() * (h - 3));
       if (grid[ry][rx] === 0) grid[ry][rx] = 2;
     }
@@ -164,6 +178,46 @@ random() * (w - 2));
     const spawns = [[2, 1], [Math.floor(w / 2), 1], [w - 3, 1]];
     for (const s of spawns) grid[s[1]][s[0]] = 0;
     return grid;
+  }
+
+  // Генерация топливных бочек на карте
+  function generateFuelCans(grid) {
+    const fuelCans = [];
+    const w = grid[0].length;
+    const h = grid.length;
+    
+    // Определяем количество бочек (от 2 до 5)
+    const canCount = 2 + Math.floor(Math.random() * 4);
+    
+    let placed = 0;
+    let attempts = 0;
+    const maxAttempts = 100;
+    
+    while (placed < canCount && attempts < maxAttempts) {
+      attempts++;
+      const rx = 1 + Math.floor(Math.random() * (w - 2));
+      const ry = 1 + Math.floor(Math.random() * (h - 3));
+      
+      // Проверяем, можно ли разместить бочку здесь
+      // Нельзя размещать в воде (3), бетоне (1), кирпичах (2), базе (9)
+      if (grid[ry][rx] === 0 || grid[ry][rx] === 4) { // Можно на траве или пустой клетке
+        // Проверяем, не слишком ли близко к другим бочкам
+        let tooClose = false;
+        for (const can of fuelCans) {
+          if (Math.abs(can.x - rx) < 3 && Math.abs(can.y - ry) < 3) {
+            tooClose = true;
+            break;
+          }
+        }
+        
+        if (!tooClose) {
+          fuelCans.push({ x: rx * TILE + TILE / 2, y: ry * TILE + TILE / 2, alive: true });
+          placed++;
+        }
+      }
+    }
+    
+    return fuelCans;
   }
 
   // -----------------------
@@ -227,7 +281,7 @@ random() * (w - 2));
       this.updateMenuVisual();
     }
 
-selectPrev() {
+    selectPrev() {
       this.menuIndex = (this.menuIndex + this.items.length - 1) % this.items.length;
       this.updateMenuVisual();
       audio.beep(600, 0.06, 'sine', 0.12);
@@ -241,8 +295,8 @@ selectPrev() {
       if (this.menuIndex === 0) {
         this.scene.start('GameScene');
       } else {
-        // try close, else do nothing
-        try { window.close(); } catch (e) { /* ignore */ }
+        // Пересылаем на главную страницу Вконтакте
+        window.location.href = 'https://vk.com';
       }
       audio.beep(900, 0.06, 'sine', 0.12);
     }
@@ -265,6 +319,7 @@ selectPrev() {
       this.enemies = [];
       this.bullets = [];
       this.powerups = [];
+      this.fuelCans = [];
       this.explosions = [];
       this.flashes = [];
       this.currentWave = 1;
@@ -279,6 +334,9 @@ selectPrev() {
     }
 
     create() {
+      // Генерируем топливные бочки
+      this.fuelCans = generateFuelCans(this.map);
+      
       // input
       this.cursors = this.input.keyboard.createCursorKeys();
       this.keyW = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.W);
@@ -302,9 +360,14 @@ selectPrev() {
       this.uiScore = this.add.text(12, 8, '', { fontSize: '20px', color: '#eaeaea' });
       this.uiLevel = this.add.text(260, 8, '', { fontSize: '20px', color: '#ffd' });
       this.uiHint = this.add.text(12, GAME_HEIGHT - 28, 'WASD/Стрелки - движение  ПРОБЕЛ - стрельба  ESC - меню', { fontSize: '16px', color: '#bdbdbd' });
+      this.uiFuelText = this.add.text(GAME_WIDTH - 200, 8, '', { fontSize: '20px', color: '#FF9900' });
 
       // container for hearts (we will remove & recreate content)
       this.uiLives = this.add.container();
+
+      // Панель топлива
+      this.fuelBarBg = this.add.graphics();
+      this.fuelBar = this.add.graphics();
 
       // for smoother timings
       this.lastTick = 0;
@@ -315,7 +378,10 @@ selectPrev() {
         spawnX: cx, spawnY: cy,
         x: cx * TILE + TILE / 2, y: cy * TILE + TILE / 2,
         dir: 0, turretAngle: -90, speed: 3.2, size: 11,
-        reload: 0, lives: 3, level: 1, score: 0, alive: true, invul: 0, trackPhase: 0
+        reload: 0, lives: 3, level: 1, score: 0, alive: true, invul: 0, trackPhase: 0,
+        fuel: 100, // Полный бак топлива (100%)
+        maxFuel: 100,
+        fuelConsumption: 0.02 // Потребление топлива за кадр при движении
       };
     }
 
@@ -346,7 +412,7 @@ selectPrev() {
     createBullet(x, y, angleDeg, owner = 'player', speed = 8, level = 1) {
       this.bullets.push({ x, y, angle: Phaser.Math.DegToRad(angleDeg), owner, speed, range: 600, alive: true, size: 6, level });
 
-if (owner === 'player') audio.beep(900, 0.06, 'sine', 0.12); else audio.beep(300, 0.05, 'square', 0.09);
+      if (owner === 'player') audio.beep(900, 0.06, 'sine', 0.12); else audio.beep(300, 0.05, 'square', 0.09);
     }
 
     update(time, delta) {
@@ -370,6 +436,20 @@ if (owner === 'player') audio.beep(900, 0.06, 'sine', 0.12); else audio.beep(300
       for (const e of this.enemies) if (e.alive) this.updateEnemy(e);
       for (let i = this.bullets.length - 1; i >= 0; i--) { const b = this.bullets[i]; this.updateBullet(b); if (!b.alive) this.bullets.splice(i, 1); }
       for (let i = this.powerups.length - 1; i >= 0; i--) { const p = this.powerups[i]; if (!p.update(this.player)) this.powerups.splice(i, 1); }
+      
+      // Обновление топливных бочек
+      for (let i = this.fuelCans.length - 1; i >= 0; i--) {
+        const can = this.fuelCans[i];
+        if (can.alive && this.player.alive && 
+            Phaser.Math.Distance.Between(this.player.x, this.player.y, can.x, can.y) < 28) {
+          // Игрок подобрал бочку
+          this.player.fuel = Math.min(this.player.maxFuel, this.player.fuel + this.player.maxFuel / 3);
+          can.alive = false;
+          audio.fuelPickup();
+          this.flashes.push({ x: can.x, y: can.y, timer: 20 });
+        }
+      }
+      
       // explode/flash cleanup
       this.explosions = this.explosions.filter(ex => { ex.timer--; return ex.timer > 0; });
       this.flashes = this.flashes.filter(f => { f.timer--; return f.timer > 0; });
@@ -398,29 +478,28 @@ if (owner === 'player') audio.beep(900, 0.06, 'sine', 0.12); else audio.beep(300
           // regen map & reset arrays
           this.map = generateRandomMap();
           this.base = findBase(this.map);
+          // Генерируем новые топливные бочки для нового уровня
+          this.fuelCans = generateFuelCans(this.map);
           this.enemies.length = 0; this.bullets.length = 0; this.powerups.length = 0; this.explosions.length = 0; this.flashes.length = 0;
           // reposition player spawn bottom
           this.player.spawnX = 9; this.player.spawnY = MAP_H - 2;
           this.player.x = this.player.spawnX * TILE + TILE / 2; this.player.y = this.player.spawnY * TILE + TILE / 2;
+          // Восстанавливаем топливо при переходе на новый уровень
+          this.player.fuel = this.player.maxFuel;
           // small delay/visual can be added
         }
         const spawnCount = Math.min(8, 2 + this.currentLevel + this.currentWave);
         this.spawnWave(spawnCount);
       }
 
-      // check game over
-      if (this.player.lives <= 0) {
+      // check game over - теперь также при нулевом топливе
+      if (this.player.lives <= 0 || this.player.fuel <= 0) {
         // go to menu / game over
         this.scene.pause();
         this.scene.launch('MenuScene');
-        alert('GAME OVER — База/Игрок погиб. Возвращение в меню.');
+        alert('GAME OVER — База/Игрок погиб или закончилось топливо. Возвращение в меню.');
         this.scene.stop();
         return;
-      fetch("/save_score", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: "Игрок", score: this.player.score })
-})
       }
 
       // render
@@ -428,18 +507,29 @@ if (owner === 'player') audio.beep(900, 0.06, 'sine', 0.12); else audio.beep(300
 
       // HUD
       this.fpsText.setText('FPS: ' + Math.round(this.game.loop.actualFps));
+      
+      // Обновление UI топлива
+      this.uiFuelText.setText(`Топливо: ${Math.floor(this.player.fuel)}%`);
+      this.updateFuelBar();
     }
 
     updatePlayer(keys) {
       const p = this.player;
       if (!p.alive) return;
-      let dx = 0, dy = 0, moved = false;
+      
+      // Потребление топлива только при движении
+      let moved = false;
+      let dx = 0, dy = 0;
+      
       if (keys.up) { p.dir = 0; dy = -p.speed; moved = true; }
       else if (keys.down) { p.dir = 2; dy = p.speed; moved = true; }
       else if (keys.left) { p.dir = 3; dx = -p.speed; moved = true; }
       else if (keys.right) { p.dir = 1; dx = p.speed; moved = true; }
 
-      if (dx || dy) {
+      if (moved && p.fuel > 0) {
+        // Потребляем топливо при движении
+        p.fuel = Math.max(0, p.fuel - p.fuelConsumption);
+        
         const newx = p.x + dx, newy = p.y + dy;
         const left = Math.floor((newx - p.size / 2) / TILE);
         const right = Math.floor((newx + p.size / 2) / TILE);
@@ -450,9 +540,7 @@ if (owner === 'player') audio.beep(900, 0.06, 'sine', 0.12); else audio.beep(300
           for (let tx = left; tx <= right; tx++) {
             if (ty < 0, tx < 0, ty >= MAP_H || tx >= MAP_W) { blocked = true; break; }
             const t = this.map[ty][tx];
-            if ([1, 2, 3, 9].
-
-includes(t)) { blocked = true; break; } // water blocks too
+            if ([1, 2, 3, 9].includes(t)) { blocked = true; break; } // water blocks too
           }
           if (blocked) break;
         }
@@ -487,6 +575,11 @@ includes(t)) { blocked = true; break; } // water blocks too
         let diff = ((tgt - cur + 180) % 360) - 180;
         p.turretAngle = (cur + diff * 0.4) % 360;
       }
+      
+      // Если топливо закончилось, танк не может двигаться
+      if (p.fuel <= 0) {
+        // Танк обездвижен
+      }
 
       // reload
       if (p.reload > 0) p.reload--;
@@ -502,6 +595,7 @@ includes(t)) { blocked = true; break; } // water blocks too
         }
       }
     }
+
     updateEnemy(e) {
       if (!e.alive) return;
 
@@ -520,7 +614,7 @@ includes(t)) { blocked = true; break; } // water blocks too
         const top = Math.floor((newy - e.size / 2) / TILE);
         const bottom = Math.floor((newy + e.size / 2) / TILE);
 
-    // проверка карты
+        // проверка карты
         for (let ty = top; ty <= bottom; ty++) {
           for (let tx = left; tx <= right; tx++) {
             if (ty < 0, tx < 0, ty >= MAP_H || tx >= MAP_W) return false;
@@ -528,52 +622,50 @@ includes(t)) { blocked = true; break; } // water blocks too
           }
         }
 
-    // проверка игрока
+        // проверка игрока
         const pd = this.player;
         if (pd.alive && Math.abs(pd.x - newx) < pd.size + e.size && Math.abs(pd.y - newy) < pd.size + e.size) return false;
 
-    // проверка других врагов
+        // проверка других врагов
         for (const other of this.enemies) {
           if (other === e || !other.alive) continue;
           if (Math.abs(other.x - newx) < other.size + e.size && Math.abs(other.y - newy) < other.size + e.size) return false;
         }
 
-    // проверка пуль игрока
+        // проверка пуль игрока
         for (const b of this.bullets) {
           if (b.alive && b.owner === 'player') {
             if (Math.abs(b.x - newx) < b.size + e.size && Math.abs(b.y - newy) < e.size + b.size) return false;
           }
         }
 
-    // путь свободен
+        // путь свободен
         e.x = newx;
         e.y = newy;
         return true;
       };
 
-  // основные движения: вперед
+      // основные движения: вперед
       const dx = [0, e.speed, 0, -e.speed][e.dir];
       const dy = [-e.speed, 0, e.speed, 0][e.dir];
       let moved = tryMove(dx, dy);
 
-  // если заблокировано, пробуем немного смещаться по оси X или Y
+      // если заблокировано, пробуем немного смещаться по оси X или Y
       if (!moved) {
         moved = tryMove(dx, 0) || tryMove(0, dy);
         if (!moved) {
-          e.
-
-dir = Phaser.Math.Between(0, 3); // если всё ещё заблокировано — меняем направление
+          e.dir = Phaser.Math.Between(0, 3); // если всё ещё заблокировано — меняем направление
           e.moveTimer = Phaser.Math.Between(20, 60);
         }
       }
 
-  // поворот башни
+      // поворот башни
       const turretTargetAngle = [-90, 0, 90, 180][e.dir];
       const cur = e.turretAngle || 0;
       let diff = ((turretTargetAngle - cur + 180) % 360) - 180;
       e.turretAngle = (cur + diff * 0.4) % 360;
 
-  // стрельба
+      // стрельба
       e.reload--;
       if (e.reload <= 0) {
         if (Math.random() < 0.5) {
@@ -584,9 +676,6 @@ dir = Phaser.Math.Between(0, 3); // если всё ещё заблокиров�
         e.reload = Phaser.Math.Between(40, 120);
       }
     }
-
-
-    
 
     updateBullet(b) {
       b.x += Math.cos(b.angle) * b.speed;
@@ -657,6 +746,43 @@ dir = Phaser.Math.Between(0, 3); // если всё ещё заблокиров�
       }
     }
 
+    updateFuelBar() {
+      const p = this.player;
+      const barWidth = 150;
+      const barHeight = 16;
+      const x = GAME_WIDTH - barWidth - 20;
+      const y = 40;
+      
+      // Очищаем предыдущие бары
+      this.fuelBarBg.clear();
+      this.fuelBar.clear();
+      
+      // Фон бара
+      this.fuelBarBg.fillStyle(0x333333, 1);
+      this.fuelBarBg.fillRect(x, y, barWidth, barHeight);
+      
+      // Цвет бара в зависимости от уровня топлива
+      let fuelColor;
+      if (p.fuel > 50) fuelColor = 0x00FF00; // Зеленый
+      else if (p.fuel > 20) fuelColor = 0xFFFF00; // Желтый
+      else fuelColor = 0xFF0000; // Красный
+      
+      // Заполненная часть
+      const fillWidth = (p.fuel / p.maxFuel) * barWidth;
+      this.fuelBar.fillStyle(fuelColor, 1);
+      this.fuelBar.fillRect(x, y, fillWidth, barHeight);
+      
+      // Обводка
+      this.fuelBar.lineStyle(2, 0xFFFFFF, 1);
+      this.fuelBar.strokeRect(x, y, barWidth, barHeight);
+      
+      // Если топливо на исходе, добавляем мигание
+      if (p.fuel < 15 && Math.floor(this.time.now / 300) % 2 === 0) {
+        this.fuelBar.fillStyle(0xFFFFFF, 0.5);
+        this.fuelBar.fillRect(x, y, fillWidth, barHeight);
+      }
+    }
+
     renderFrame() {
       // clear
       this.graph.clear();
@@ -682,9 +808,8 @@ dir = Phaser.Math.Between(0, 3); // если всё ещё заблокиров�
 
       // enemies
       for (const e of this.enemies) if (e.alive) {
-       const turretAngles = [-90, 0, 90, 180]; // 0=up,1=right,2=down,3=left
-      this.drawTank(e.x, e.y, e.dir, turretAngles[e.dir], COLORS.hull_red, 1, e.trackPhase);
-
+        const turretAngles = [-90, 0, 90, 180]; // 0=up,1=right,2=down,3=left
+        this.drawTank(e.x, e.y, e.dir, turretAngles[e.dir], COLORS.hull_red, 1, e.trackPhase);
       }
 
       // player
@@ -696,6 +821,11 @@ dir = Phaser.Math.Between(0, 3); // если всё ещё заблокиров�
 
       // powerups
       for (const p of this.powerups) p.draw(this.graph);
+      
+      // fuel cans
+      for (const can of this.fuelCans) {
+        if (can.alive) this.drawFuelCan(can.x, can.y);
+      }
 
       // explosions
       for (const ex of this.explosions) if (ex.timer > 0) {
@@ -714,6 +844,33 @@ dir = Phaser.Math.Between(0, 3); // если всё ещё заблокиров�
 
       // UI update
       this.drawUI();
+    }
+
+    drawFuelCan(x, y) {
+      const g = this.graph;
+      // Основа бочки
+      g.fillStyle(COLORS.fuel, 1).fillRect(x - 10, y - 16, 20, 32);
+      
+      // Ободки бочки
+      g.lineStyle(3, COLORS.fuel_dark, 1);
+      g.strokeRect(x - 10, y - 16, 20, 32);
+      g.lineStyle(2, COLORS.fuel_dark, 1);
+      g.lineBetween(x - 10, y - 10, x + 10, y - 10);
+      g.lineBetween(x - 10, y + 10, x + 10, y + 10);
+      
+      // Этикетка
+      g.fillStyle(0xFF0000, 1).fillRect(x - 8, y - 8, 16, 16);
+      g.fillStyle(0xFFFFFF, 1).fillRect(x - 6, y - 6, 12, 12);
+      
+      // Буква "F" (Fuel)
+      g.lineStyle(3, 0xFF0000, 1);
+      g.lineBetween(x - 4, y - 4, x - 4, y + 4);
+      g.lineBetween(x - 4, y - 4, x + 2, y - 4);
+      g.lineBetween(x - 4, y, x, y);
+      
+      // Верхняя крышка
+      g.fillStyle(COLORS.fuel_dark, 1).fillEllipse(x, y - 18, 12, 6);
+      g.fillStyle(0x333333, 1).fillCircle(x, y - 18, 4);
     }
 
     drawBrick(rx, ry) {
@@ -752,65 +909,68 @@ dir = Phaser.Math.Between(0, 3); // если всё ещё заблокиров�
 
     // drawTank: improved tread animation and turret vs body separation
     drawTank(cx, cy, dir, turretAngle, baseColor, level = 1, trackPhase = 0, flash = false) {
-    // вычисляем тайл танка
-    const tx = Math.floor(cx / TILE);
-    const ty = Math.floor(cy / TILE);
+      // вычисляем тайл танка
+      const tx = Math.floor(cx / TILE);
+      const ty = Math.floor(cy / TILE);
 
-    // прозрачность танка: кусты или флеш
-    let alpha = 1;
-    if (this.map[ty] && this.map[ty][tx] === 4) alpha = 0.05; // на кустах
-    if (flash) alpha = 0.05; // инвул/flash
+      // прозрачность танка: кусты или флеш
+      let alpha = 1;
+      if (this.map[ty] && this.map[ty][tx] === 4) alpha = 0.05; // на кустах
+      if (flash) alpha = 0.05; // инвул/flash
 
-    // shadow (тень остаётся почти непрозрачной)
-    this.graph.fillStyle(0x111111, 0.5).fillEllipse(cx, cy + 18*SCALE, 56*SCALE, 18*SCALE);
+      // Если у игрока закончилось топливо, рисуем мигание
+      if (this.player && this.player.fuel <= 0 && this.player.alive && Math.floor(this.time.now / 200) % 2 === 0) {
+        alpha = 0.3;
+      }
 
-    // hull body
-    const hull = (level === 1) ? baseColor : (level === 2 ? 0xE6C84D : 0xFF8C00);
-    this.graph.fillStyle(hull, alpha).fillRect(cx - 26*SCALE, cy - 20*SCALE, 52*SCALE, 40*SCALE);
-    this.graph.lineStyle(2, 0x000000, alpha).
+      // shadow (тень остаётся почти непрозрачной)
+      this.graph.fillStyle(0x111111, 0.5).fillEllipse(cx, cy + 18*SCALE, 56*SCALE, 18*SCALE);
 
-strokeRect(cx - 26*SCALE, cy - 20*SCALE, 52*SCALE, 40*SCALE);
+      // hull body
+      const hull = (level === 1) ? baseColor : (level === 2 ? 0xE6C84D : 0xFF8C00);
+      this.graph.fillStyle(hull, alpha).fillRect(cx - 26*SCALE, cy - 20*SCALE, 52*SCALE, 40*SCALE);
+      this.graph.lineStyle(2, 0x000000, alpha).strokeRect(cx - 26*SCALE, cy - 20*SCALE, 52*SCALE, 40*SCALE);
 
-    // side plates (track covers)
-    this.graph.fillStyle(0x323232, alpha).fillRect(cx - 32*SCALE, cy - 20*SCALE, 6*SCALE, 40*SCALE);
-    this.graph.fillStyle(0x323232, alpha).fillRect(cx + 26*SCALE, cy - 20*SCALE, 6*SCALE, 40*SCALE);
+      // side plates (track covers)
+      this.graph.fillStyle(0x323232, alpha).fillRect(cx - 32*SCALE, cy - 20*SCALE, 6*SCALE, 40*SCALE);
+      this.graph.fillStyle(0x323232, alpha).fillRect(cx + 26*SCALE, cy - 20*SCALE, 6*SCALE, 40*SCALE);
 
-    // treads
-    const treadColor = 0x2a2a2a, bolt = 0x606060;
-    if (dir === 0 || dir === 2) {
+      // treads
+      const treadColor = 0x2a2a2a, bolt = 0x606060;
+      if (dir === 0 || dir === 2) {
         for (let i = -2; i <= 2; i++) {
-            const oy = cy + i * 8 + (trackPhase % 3) - 1;
-            this.graph.fillStyle(treadColor, alpha).fillRect(cx - 34*SCALE, oy - 4*SCALE, 8*SCALE, 8*SCALE);
-            this.graph.fillStyle(treadColor, alpha).fillRect(cx + 26*SCALE, oy - 4*SCALE, 8*SCALE, 8*SCALE);
-            this.graph.fillStyle(bolt, alpha).fillRect(cx - 30*SCALE, oy - 2*SCALE, 2*SCALE, 2*SCALE);
-            this.graph.fillStyle(bolt, alpha).fillRect(cx + 30*SCALE, oy - 2*SCALE, 2*SCALE, 2*SCALE);
+          const oy = cy + i * 8 + (trackPhase % 3) - 1;
+          this.graph.fillStyle(treadColor, alpha).fillRect(cx - 34*SCALE, oy - 4*SCALE, 8*SCALE, 8*SCALE);
+          this.graph.fillStyle(treadColor, alpha).fillRect(cx + 26*SCALE, oy - 4*SCALE, 8*SCALE, 8*SCALE);
+          this.graph.fillStyle(bolt, alpha).fillRect(cx - 30*SCALE, oy - 2*SCALE, 2*SCALE, 2*SCALE);
+          this.graph.fillStyle(bolt, alpha).fillRect(cx + 30*SCALE, oy - 2*SCALE, 2*SCALE, 2*SCALE);
         }
-    } else {
+      } else {
         for (let i = -2; i <= 2; i++) {
-            const ox = cx + i * 8 + (trackPhase % 3) - 1;
-            this.graph.fillStyle(treadColor, alpha).fillRect(ox - 4*SCALE, cy + 22*SCALE, 8*SCALE, 8*SCALE);
-            this.graph.fillStyle(treadColor, alpha).fillRect(ox - 4*SCALE, cy - 30*SCALE, 8*SCALE, 8*SCALE);
-            this.graph.fillStyle(bolt, alpha).fillRect(ox - 2*SCALE, cy + 24*SCALE, 2*SCALE, 2*SCALE);
-            this.graph.fillStyle(bolt, alpha).fillRect(ox - 2*SCALE, cy - 28*SCALE, 2*SCALE, 2*SCALE);
+          const ox = cx + i * 8 + (trackPhase % 3) - 1;
+          this.graph.fillStyle(treadColor, alpha).fillRect(ox - 4*SCALE, cy + 22*SCALE, 8*SCALE, 8*SCALE);
+          this.graph.fillStyle(treadColor, alpha).fillRect(ox - 4*SCALE, cy - 30*SCALE, 8*SCALE, 8*SCALE);
+          this.graph.fillStyle(bolt, alpha).fillRect(ox - 2*SCALE, cy + 24*SCALE, 2*SCALE, 2*SCALE);
+          this.graph.fillStyle(bolt, alpha).fillRect(ox - 2*SCALE, cy - 28*SCALE, 2*SCALE, 2*SCALE);
         }
+      }
+
+      // turret
+      this.graph.fillStyle(0x2a2a2a, alpha).fillCircle(cx, cy - 6*SCALE, 12*SCALE);
+      this.graph.fillStyle(0x505050, alpha).fillCircle(cx, cy - 6*SCALE, 8*SCALE);
+
+      // barrel
+      const rad = Phaser.Math.DegToRad(turretAngle);
+      const barrelLen = 26 + (level - 1) * 8 * SCALE;
+      const bx = cx + Math.cos(rad) * barrelLen;
+      const by = cy - 6*SCALE + Math.sin(rad) * barrelLen;
+      const thickness = level === 1 ? 6 : level === 2 ? 8 : 10;
+      this.graph.lineStyle(thickness*SCALE, 0x141414, alpha).lineBetween(cx, cy - 6*SCALE, bx, by);
+      this.graph.fillStyle(0x0f0f0f, alpha).fillCircle(cx, cy - 6*SCALE, 4*SCALE);
+
+      // hatch & details
+      this.graph.lineStyle(1, 0x222222, alpha).lineBetween(cx - 10*SCALE, cy - 16*SCALE, cx + 10*SCALE, cy - 16*SCALE);
     }
-
-    // turret
-    this.graph.fillStyle(0x2a2a2a, alpha).fillCircle(cx, cy - 6*SCALE, 12*SCALE);
-    this.graph.fillStyle(0x505050, alpha).fillCircle(cx, cy - 6*SCALE, 8*SCALE);
-
-    // barrel
-    const rad = Phaser.Math.DegToRad(turretAngle);
-    const barrelLen = 26 + (level - 1) * 8 * SCALE;
-    const bx = cx + Math.cos(rad) * barrelLen;
-    const by = cy - 6*SCALE + Math.sin(rad) * barrelLen;
-    const thickness = level === 1 ? 6 : level === 2 ? 8 : 10;
-    this.graph.lineStyle(thickness*SCALE, 0x141414, alpha).lineBetween(cx, cy - 6*SCALE, bx, by);
-    this.graph.fillStyle(0x0f0f0f, alpha).fillCircle(cx, cy - 6*SCALE, 4*SCALE);
-
-    // hatch & details
-    this.graph.lineStyle(1, 0x222222, alpha).lineBetween(cx - 10*SCALE, cy - 16*SCALE, cx + 10*SCALE, cy - 16*SCALE);
-}
 
     drawUI() {
       this.uiScore.setText('Счёт: ' + this.player.score + '   Волна: ' + this.currentWave + '   Уровень: ' + this.currentLevel);
@@ -848,8 +1008,7 @@ strokeRect(cx - 26*SCALE, cy - 20*SCALE, 52*SCALE, 40*SCALE);
       if (player.alive && Phaser.Math.Distance.Between(player.x, player.y, this.x, this.y) < 28) {
         if (player.level < 3) { player.level++; player.speed += 0.4; if (audio) audio.burst([880, 1200, 1480], 0.18, 0.18); }
         else { player.lives++; if (audio) audio.beep(1500, 0.12, 'sine', 0.16); }
-        scene.flashes.push({ x: player.
-x, y: player.y, timer: 20 });
+        scene.flashes.push({ x: player.x, y: player.y, timer: 20 });
         return false;
       }
       return this.timer > 0;
